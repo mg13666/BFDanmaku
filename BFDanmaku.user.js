@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         BFDanmaku - A站旧高级弹幕复活
 // @namespace    https://github.com/mg13666/BFDanmaku
-// @version      1.3.0
-// @description  拦截A站播放器的弹幕API响应，用BFDanmaku渲染旧高级弹幕。点击"启用高级弹幕"按钮激活。
+// @version      1.3.1
+// @description  拦截A站播放器的弹幕API响应（list + pollByPosition），用BFDanmaku渲染旧高级弹幕。
 // @author       mg13666 / boomfun
 // @match        https://www.acfun.cn/v/*
 // @require      https://raw.githubusercontent.com/mg13666/BFDanmaku/master/dist/BFDanmaku.js
@@ -16,11 +16,9 @@
   var DEV_MODE = true;
 
   // ==================== 拦截层：抓取播放器自己的弹幕数据 ====================
-  // 必须在 document-start 注入，比播放器 SDK 更早。
   var capturedDanmakus = [];
   var seenIds = {};
 
-  // 拦截 XMLHttpRequest
   var origXHROpen = XMLHttpRequest.prototype.open;
   var origXHRSend = XMLHttpRequest.prototype.send;
 
@@ -31,27 +29,28 @@
 
   XMLHttpRequest.prototype.send = function (body) {
     var self = this;
-    if (self._bfUrl && self._bfUrl.indexOf("pollByPosition") !== -1) {
+    if (self._bfUrl && self._bfUrl.indexOf("new-danmaku") !== -1) {
       self.addEventListener("load", function () {
         try {
           var data = JSON.parse(self.responseText);
           if (data.result === 0 && data.danmakus) {
+            var types = {};
             for (var i = 0; i < data.danmakus.length; i++) {
               var dm = data.danmakus[i];
               if (!seenIds[dm.danmakuId]) {
                 seenIds[dm.danmakuId] = true;
                 capturedDanmakus.push(dm);
               }
+              types[dm.danmakuType] = (types[dm.danmakuType] || 0) + 1;
             }
-            if (DEV_MODE && data.danmakus.length > 0) {
-              console.log(
-                "[BFDanmaku] 拦截 " +
-                  data.danmakus.length +
-                  " 条弹幕 (累计 " +
-                  capturedDanmakus.length +
-                  ")"
-              );
-            }
+            var endpoint = self._bfUrl.includes("list") ? "list" : (self._bfUrl.includes("poll") ? "poll" : "other");
+            console.log(
+              "[BFDanmaku] 拦截 " +
+                data.danmakus.length +
+                " 条 (累计 " + capturedDanmakus.length +
+                ") 来自 " + endpoint +
+                " 类型: " + JSON.stringify(types)
+            );
           }
         } catch (e) {}
       });
@@ -251,7 +250,7 @@
     var adv = [], normal = [];
     for (var i = 0; i < list.length; i++) {
       if (list[i].danmakuType === 7) adv.push(list[i]);
-      else normal.push(list[i]);
+      else if (list[i].danmakuType !== 0) normal.push(list[i]);
     }
     var count = 0;
     if (adv.length) {
@@ -297,7 +296,7 @@
 
   // ==================== 主逻辑 ====================
   async function main() {
-    console.log("[BFDanmaku] v1.3.0 拦截模式");
+    console.log("[BFDanmaku] v1.3.1 拦截模式 (list+poll)");
 
     if (!window.DanmakuPool || !window.DanmakuStage) {
       console.error("[BFDanmaku] 引擎未加载");
@@ -335,16 +334,12 @@
 
     async function onEnableClick() {
       var btn = document.getElementById("bfdanmaku-btn");
-
-      // 初始化引擎
       initEngine();
 
-      // 把拦截到的弹幕喂给引擎
+      // 如果没有拦截到弹幕，短暂播放触发
       if (capturedDanmakus.length === 0) {
-        statusEl.textContent = "尚未拦截到弹幕，尝试播放一下视频...";
-        if (btn) { btn.textContent = "等待弹幕..."; }
-
-        // 尝试触发播放器加载弹幕：短暂播放+暂停
+        statusEl.textContent = "尚未拦截到弹幕，短暂播放触发...";
+        if (btn) btn.textContent = "触发中...";
         try {
           await video.play();
           await new Promise(function (r) { setTimeout(r, 2000); });
@@ -358,7 +353,7 @@
         return;
       }
 
-      // 统计类型
+      // 去重后重新统计
       var typeStats = {};
       for (var i = 0; i < capturedDanmakus.length; i++) {
         var t = capturedDanmakus[i].danmakuType;
@@ -375,7 +370,6 @@
       console.log("[BFDanmaku] ✅ " + loaded + " 条 | " + JSON.stringify(typeStats));
     }
 
-    // 如果页面自己已经拦截到了弹幕，更新状态
     if (capturedDanmakus.length > 0) {
       statusEl.textContent = "已捕获 " + capturedDanmakus.length + " 条";
     } else {
@@ -387,7 +381,6 @@
     console.log("[BFDanmaku] 🚀 按钮已插入");
   }
 
-  // ==================== 启动 ====================
   if (document.readyState === "loading") {
     document.addEventListener("DOMContentLoaded", main);
   } else {
