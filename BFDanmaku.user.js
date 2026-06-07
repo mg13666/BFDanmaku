@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         BFDanmaku - A站旧高级弹幕复活
 // @namespace    https://github.com/mg13666/BFDanmaku
-// @version      1.4.3
-// @description  拦截A站播放器弹幕API + 本地存档优先渲染旧高级弹幕。点击"启用高级弹幕"按钮激活。
+// @version      1.5.0
+// @description  拦截A站播放器弹幕API + 本地存档优先渲染旧高级弹幕。点击"启用高级弹幕"按钮激活。"📁 加载本地弹幕"支持从本地文件导入C-M格式数据。
 // @author       mg13666 / boomfun
 // @match        https://www.acfun.cn/v/*
 // @require      https://raw.githubusercontent.com/mg13666/BFDanmaku/master/dist/BFDanmaku.js
@@ -261,12 +261,12 @@
   }
 
   // ==================== UI ====================
-  function createButton(onClick) {
+  function createButton(id, text, onClick, extraStyle) {
     var btn = document.createElement("button");
-    btn.id = "bfdanmaku-btn";
-    btn.textContent = "启用高级弹幕";
+    btn.id = id;
+    btn.textContent = text;
     btn.style.cssText =
-      "background:linear-gradient(135deg,#fd4e6d,#fda34b);color:#fff;border:none;border-radius:4px;padding:8px 20px;font-size:14px;font-weight:bold;cursor:pointer;";
+      "background:linear-gradient(135deg,#fd4e6d,#fda34b);color:#fff;border:none;border-radius:4px;padding:8px 20px;font-size:14px;font-weight:bold;cursor:pointer;" + (extraStyle || "");
     btn.addEventListener("mouseenter", function () { btn.style.opacity = "0.85"; });
     btn.addEventListener("mouseleave", function () { btn.style.opacity = "1"; });
     btn.addEventListener("click", onClick);
@@ -280,12 +280,16 @@
     return el;
   }
 
-  function insertToolbar(btn, statusEl) {
+  function insertToolbar(btns, statusEl) {
     var toolbar = document.createElement("div");
     toolbar.id = "bfdanmaku-toolbar";
     toolbar.style.cssText =
-      "display:flex;align-items:center;justify-content:flex-end;margin-bottom:8px;padding:4px 0;";
-    toolbar.appendChild(btn);
+      "display:flex;align-items:center;justify-content:flex-end;gap:10px;margin-bottom:8px;padding:4px 0;";
+    if (Array.isArray(btns)) {
+      for (var i = 0; i < btns.length; i++) toolbar.appendChild(btns[i]);
+    } else {
+      toolbar.appendChild(btns);
+    }
     toolbar.appendChild(statusEl);
     var cv = document.querySelector(".container-video");
     if (cv && cv.parentElement) { cv.parentElement.insertBefore(toolbar, cv); return; }
@@ -384,7 +388,7 @@
 
   // ==================== 主逻辑 ====================
   function main() {
-    console.log("[BFDanmaku] v1.4.3 | video=" + currentId + (Object.keys(ARCHIVE_MAP).length ? " | 存档视频=" + Object.keys(ARCHIVE_MAP).length + "个" : " | 纯拦截模式"));
+    console.log("[BFDanmaku] v1.5.0 | video=" + currentId + (Object.keys(ARCHIVE_MAP).length ? " | 存档视频=" + Object.keys(ARCHIVE_MAP).length + "个" : " | 纯拦截模式"));
 
     if (!window.DanmakuPool || !window.DanmakuStage) {
       setTimeout(main, 1000);
@@ -483,10 +487,115 @@
       });
     }
 
+    // ==================== 本地文件加载 ====================
+    function onLocalFileClick() {
+      var statusEl = document.getElementById("bfdanmaku-status");
+      var input = document.createElement("input");
+      input.type = "file";
+      input.accept = ".txt,.js,.json,.cm";
+      input.style.display = "none";
+      input.addEventListener("change", function () {
+        var file = input.files[0];
+        if (!file) return;
+
+        statusEl.textContent = "正在解析 " + file.name + "...";
+        console.log("[BFDanmaku] 📁 加载本地文件: " + file.name + " (" + file.size + " bytes)");
+
+        var reader = new FileReader();
+        reader.onload = function () {
+          var text = reader.result;
+          var localData = [];
+
+          // 尝试多种格式解析
+          try {
+            // 格式1: raw C-M 数组 (data1.js 风格) — export default [[], [...items], ...]
+            var arrMatch = text.match(/export\s+default\s+(\[[\s\S]*\])\s*;?\s*$/);
+            if (arrMatch) {
+              var fn = new Function("return " + arrMatch[1]);
+              var arr = fn();
+              if (arr && arr.length > 1 && Array.isArray(arr[1])) {
+                localData = arr[1];
+              }
+            }
+          } catch (e) {}
+
+          if (!localData.length) {
+            try {
+              // 格式2: 纯 JSON 数组 [{c:"...", m:"..."}, ...]
+              var parsed = JSON.parse(text);
+              if (Array.isArray(parsed)) {
+                localData = parsed;
+              } else if (parsed && Array.isArray(parsed[1])) {
+                localData = parsed[1];
+              }
+            } catch (e) {}
+          }
+
+          if (!localData.length) {
+            try {
+              // 格式3: 逐行 C-M 格式，每行为 "时间,颜色,7,字号,用户,...|m=..."
+              var lines = text.split(/\r?\n/);
+              for (var i = 0; i < lines.length; i++) {
+                var line = lines[i].trim();
+                if (!line) continue;
+                var pipeIdx = line.indexOf("|");
+                if (pipeIdx !== -1) {
+                  var c = line.substring(0, pipeIdx);
+                  var m = line.substring(pipeIdx + 1);
+                  if (m.indexOf("=") === 0) m = m.substring(1);
+                  // auto-pad c to at least 6 fields
+                  var parts = c.split(",");
+                  while (parts.length < 6) parts.push("");
+                  if (Number(parts[2]) !== 7) parts[2] = "7";
+                  c = parts.join(",");
+                  localData.push({ c: c, m: m });
+                }
+              }
+            } catch (e) {}
+          }
+
+          if (!localData.length) {
+            statusEl.textContent = "解析失败: 无法识别文件格式";
+            console.warn("[BFDanmaku] 本地文件解析失败");
+            return;
+          }
+
+          console.log("[BFDanmaku] 📁 本地解析到 " + localData.length + " 条原始弹幕");
+
+          // 如果引擎还没初始化，先初始化
+          if (!pool || !stage) {
+            waitForVideo(15000).then(function (video) {
+              initEngine(video);
+              feedLocal(localData);
+            }).catch(function () {
+              statusEl.textContent = "错误: 未找到播放器";
+            });
+          } else {
+            feedLocal(localData);
+          }
+
+          function feedLocal(data) {
+            var r = pushDanmakusToPool(data, pool);
+            statusEl.textContent = "📁 本地加载: " + r.advCount + "高级 + " + (r.loaded - r.advCount) + "普通 = " + r.loaded + "条";
+            console.log("[BFDanmaku] 📁 本地文件加载完毕: " + r.loaded + " 条 (高级=" + r.advCount + ")");
+          }
+        };
+        reader.onerror = function () {
+          statusEl.textContent = "读取文件失败";
+          console.error("[BFDanmaku] 读取本地文件失败");
+        };
+        reader.readAsText(file);
+      });
+      document.body.appendChild(input);
+      input.click();
+      setTimeout(function () { document.body.removeChild(input); }, 10000);
+    }
+
     statusEl.textContent = hasArchive ? "📦 存档加载中..." : "就绪（拦截中...）";
-    var btn = createButton(onEnableClick);
-    insertToolbar(btn, statusEl);
-    console.log("[BFDanmaku] 🚀 按钮已插入");
+    var enableBtn = createButton("bfdanmaku-btn", "启用高级弹幕", onEnableClick);
+    var localBtn = createButton("bfdanmaku-local-btn", "📁 加载本地弹幕", onLocalFileClick, "margin-left:8px;");
+    insertToolbar([enableBtn, localBtn], statusEl);
+    console.log("[BFDanmaku] 🚀 按钮已插入 (含本地加载)");
 
     archivePromise.then(function (d) {
       if (d.length > 0) statusEl.textContent = "📦 存档就绪(" + d.length + "条type=7)";
