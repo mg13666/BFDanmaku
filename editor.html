@@ -1,0 +1,135 @@
+<!DOCTYPE html>
+<html lang="zh">
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1.0">
+<title>BFDanmaku Editor</title>
+<script src="https://raw.githubusercontent.com/mg13666/BFDanmaku/master/dist/BFDanmaku.js"></script>
+<style>
+*{margin:0;padding:0;box-sizing:border-box}
+body{background:#1a1a2e;color:#eee;font-family:"Microsoft YaHei",sans-serif;padding:16px}
+h1{font-size:20px;margin-bottom:12px;color:#fd4e6d}
+.toolbar{display:flex;gap:8px;flex-wrap:wrap;margin-bottom:12px;align-items:center}
+button{padding:8px 16px;background:linear-gradient(135deg,#fd4e6d,#fda34b);border:none;border-radius:4px;color:#fff;font-weight:bold;cursor:pointer;font-size:13px}
+button:active{opacity:.8}
+label{font-size:13px;color:#aaa}
+input[type="text"],input[type="number"],select,textarea{background:#16213e;border:1px solid #333;color:#eee;padding:6px 10px;border-radius:4px;font-size:13px}
+input[type="text"]{width:180px}input[type="number"]{width:70px}
+textarea{width:100%;height:180px;font-family:Consolas,monospace;font-size:12px;resize:vertical}
+.main{display:flex;gap:16px;flex-wrap:wrap}
+.panel{flex:1 1 420px;min-width:0}
+.panel h2{font-size:14px;margin-bottom:8px;color:#fda34b}
+.frames{max-height:320px;overflow-y:auto;display:flex;flex-direction:column;gap:6px;margin-bottom:10px}
+.frame-row{display:flex;gap:6px;align-items:center;flex-wrap:wrap;background:#16213e;padding:8px;border-radius:4px}
+.frame-row label{font-size:11px;min-width:auto}
+.frame-row input{width:52px;padding:4px 6px;font-size:12px}
+.frame-row button{background:#e74c3c;padding:4px 10px;font-size:11px}
+.stage-wrap{position:relative;width:100%;max-width:640px;aspect-ratio:16/9;background:#000;border-radius:6px;overflow:hidden;margin-bottom:10px}
+#stage{position:absolute;top:0;left:0;width:100%;height:100%}
+.time-bar{margin-top:8px}
+#timeline{width:100%}
+.preview-time{font-size:12px;color:#aaa;margin-left:8px}
+.logs{max-height:150px;overflow-y:auto;font-size:11px;color:#888;margin-top:8px;background:#111;padding:8px;border-radius:4px}
+</style>
+<div class="toolbar">
+  <button id="addBtn">+ 添加弹幕</button>
+  <button id="exportBtn">📤 导出 BFDanmaku.txt</button>
+  <button id="importBtn">📥 导入文件</button>
+  <input type="file" id="importFile" accept=".txt,.js,.json,.cm" style="display:none">
+  <button id="clearBtn">🗑 清空</button>
+  <button id="playBtn">▶ 预览</button>
+  <input type="number" id="duration" value="20" min="1" max="999" title="总时长秒数">
+  <label>总时长(s)</label>
+</div>
+<div class="main">
+  <div class="panel" id="formPanel">
+    <h2>弹幕 #{index}:</h2>
+    <div style="display:flex;flex-wrap:wrap;gap:8px;margin-bottom:8px">
+      <label>文本<input type="text" id="dmText" placeholder="弹幕内容" value="Hello World"></label>
+      <label>出现(秒)<input type="number" id="dmStart" value="1" step="0.1" min="0"></label>
+      <label>字号<input type="number" id="dmSize" value="64" min="12" max="200"></label>
+      <label>颜色<input type="text" id="dmColor" value="#ffffff" style="width:80px"></label>
+    </div>
+    <div style="display:flex;flex-wrap:wrap;gap:8px;margin-bottom:8px">
+      <label>锚点<select id="dmAnchor"><option value="4">中中</option><option value="0">中左</option><option value="1">中右</option><option value="5">上左</option><option value="6">上右</option></select></label>
+      <label>加粗<select id="dmBold"><option value="1">是</option><option value="0">否</option></select></label>
+      <label>字体<select id="dmFont"><option>微软雅黑</option><option>宋体</option><option>黑体</option></select></label>
+      <label>深度<input type="number" id="dmDep" value="0" min="-10" max="10"></label>
+    </div>
+    <h2 style="margin-bottom:4px">关键帧</h2>
+    <div class="frames" id="framesList">
+      <div class="frame-row">
+        <label>x<input value="50" step="1"></label>
+        <label>y<input value="360" step="1"></label>
+        <label>scaleX<input value="1" step="0.1"></label>
+        <label>scaleY<input value="1" step="0.1"></label>
+        <label>opacity<input value="1" step="0.1"></label>
+        <label>旋转°<input value="0" step="1"></label>
+        <label>时长s<input value="2" step="0.1"></label>
+        <label>缓动<select><option value="1">linear</option><option value="2">easeOut</option><option value="3">easeIn</option><option value="4">easeBoth</option></select></label>
+        <button class="delFrame">✕</button>
+      </div>
+    </div>
+    <div class="toolbar"><button id="addFrameBtn">+ 添加关键帧</button> <button id="copyPrevBtn">复制前一帧</button></div>
+    <div class="toolbar"><button id="saveDmBtn">💾 确认此弹幕</button></div>
+  </div>
+  <div class="panel">
+    <h2>预览区 (BFDanmaku 原生渲染)</h2>
+    <div class="stage-wrap" id="stageWrap">
+      <div id="stage"></div>
+    </div>
+    <div>
+      <input type="range" id="timeline" min="0" max="20000" value="0" step="100" class="time-bar">
+      <span class="preview-time" id="timeLabel">0.0s</span>
+    </div>
+    <h2 style="margin-top:8px">已添加弹幕 (<span id="dmCount">0</span>)</h2>
+    <div class="logs" id="logs"></div>
+    <h2 style="margin-top:8px">当前编辑的原始 C-M</h2>
+    <textarea id="rawC" readonly></textarea>
+  </div>
+</div>
+<script>
+(function(){
+var DEV=true;
+var captured=[];
+var editIndex=-1;
+var BFColor=(function(){
+function Color(r,g,b,a){this.r=r!==undefined?r:255;this.g=g!==undefined?g:255;this.b=b!==undefined?b:255;this.a=a!==undefined?a:255}
+Color.fromHEX=function(h){h=h.replace("#","");while(h.length<8)h="0"+h;return new Color(parseInt("0x"+h[0]+h[1]),parseInt("0x"+h[2]+h[3]),parseInt("0x"+h[4]+h[5]),h.length>=8?parseInt("0x"+h[6]+h[7]):255)}
+Color.fromDEC=function(d){return Color.fromHEX(d.toString(16))}
+return Color})();
+var AcfunParser=(function(){
+var parentList={},waitForParent={},waitForMask={};
+function parseBlendMode(bm){if((bm>=6&&bm<=8)||bm>=11)return 0;else if(bm>6&&bm<11)return bm-3;else{if(bm===1)return 2;return bm}}
+function getContent(o){return o.w&&o.w.g&&o.w.g.d?{type:1,content:o.w.g.d}:{type:0,content:o.n?o.n.replace(/\r/g,"\n"):""}}
+function parseFilter(arr){var res=[];for(var i=0;i<arr.length;i++){var s=arr[i],f;if(s[0]===0)f={type:1,blur:s[1]};else if(s[0]===1)f={type:0,color:BFColor.fromDEC(s[1]),offsetX:0,offsetY:0,blur:s[3],knockout:s[8]===true,onlyShadow:false};else if(s[0]===2)f={type:0,color:BFColor.fromDEC(s[3]),offsetX:Math.cos((s[2]*Math.PI)/180)*s[1],offsetY:Math.sin((s[2]*Math.PI)/180)*s[1],blur:s[5],knockout:s[10]===true,onlyShadow:s[11]===true};if(f)res.push(f)}return res.length?res:undefined}
+function getAdvanced(o,color){var re=[{opacity:o.a!==undefined?Number(o.a):1,time:o.l!==undefined?Number(o.l)*1000:0,color:color,rotate:{x:o.rx!==undefined?-o.rx:0,y:o.k!==undefined?-o.k:0,z:o.r!==undefined?Number(o.r):0},point:{x:o.p&&o.p.x!==undefined?Number(o.p.x):0,y:o.p&&o.p.y!==undefined?Number(o.p.y):0,z:o.pz!==undefined?-o.pz:0},scale:{x:o.e!==undefined?Number(o.e):1,y:o.f!==undefined?Number(o.f):1,z:o.sz!==undefined?Number(o.sz):1},transition:0}];if(o.z){var last=re[0];for(var i=0;i<o.z.length;i++){var iz=o.z[i];var nxt={opacity:iz.t!==undefined?Number(iz.t):last.opacity,time:iz.l*1000,color:iz.c!==undefined?BFColor.fromDEC(Number(iz.c)):last.color,rotate:{z:iz.d!==undefined?iz.d:last.rotate.z,y:iz.e!==undefined?-iz.e:last.rotate.y,x:iz.rx!==undefined?-iz.rx:last.rotate.x},scale:{y:iz.g!==undefined?Number(iz.g):last.scale.y,x:iz.f!==undefined?Number(iz.f):last.scale.x,z:iz.sz!==undefined?Number(iz.sz):last.scale.z},point:{x:iz.x!==undefined?Number(iz.x):last.point.x,y:iz.y!==undefined?Number(iz.y):last.point.y,z:iz.z!==undefined?-iz.z:last.point.z},transition:iz.v!==undefined?Number(iz.v):1};re.push(nxt);last=nxt}}return re}
+function parse(data){parentList={};waitForParent={};waitForMask={};var res=[];for(var i=0;i<data.length;i++){var item=data[i];var c=item.c.split(",");if(Number(c[2])!==7)continue;var id="bf-o_"+Math.ceil(Math.random()*1e7)+"_"+Math.ceil(Math.random()*1e7);var color=BFColor.fromDEC(parseInt(c[1]));var advance=JSON.parse(item.m);var content=getContent(advance);var confFilter=advance.w&&advance.w.l?parseFilter(advance.w.l):undefined;var adv=getAdvanced(advance,color);var o={id:id,content:content.content,startTime:Math.floor(Number(c[0])*1000),anchor:advance.c!==undefined?Number(advance.c):0,word:{bold:advance.w&&advance.w.b!==undefined?advance.w.b:false,stroke:advance.b!==undefined?advance.b:false,font:advance.w&&advance.w.f?(advance.w.f==="微软雅黑"||advance.w.f==="Microsoft YaHei"?"微软雅黑":advance.w.f):undefined,size:Number(c[3])},contentType:content.type,zindex:advance.dep?Number(advance.dep):0,filter:confFilter,frames:adv,bm:advance.bm!==undefined?parseBlendMode(Number(advance.bm)):0};if(advance.parent){if(parentList[advance.parent])o.parent=parentList[advance.parent];else{waitForParent[advance.parent]=waitForParent[advance.parent]||[];waitForParent[advance.parent].push(o)}}if(advance.name){parentList[advance.name]=id;var wp=waitForParent[advance.name];if(wp){for(var j=0;j<wp.length;j++)wp[j].parent=id;delete waitForParent[advance.name]}var wm=waitForMask[advance.name];if(wm){for(var k=0;k<wm.length;k++)wm[k].mask=id;delete waitForMask[advance.name]}}if(advance.mask){if(parentList[advance.mask])o.mask=parentList[advance.mask];else{waitForMask[advance.mask]=waitForMask[advance.mask]||[];waitForMask[advance.mask].push(o)}}res.push(o)}return res}
+return parse})();
+function buildFromForm(){var text=getVal("dmText");var start=parseFloat(getVal("dmStart"));var size=parseInt(getVal("dmSize"));var colorHex=getVal("dmColor");var anchor=parseInt(getVal("dmAnchor"));var bold=getVal("dmBold")==="1";var font=getVal("dmFont");var dep=parseInt(getVal("dmDep"));var colorDec=parseInt(BFColor.fromHEX(colorHex).r.toString(16)+BFColor.fromHEX(colorHex).g.toString(16)+BFColor.fromHEX(colorHex).b.toString(16),16);var z=[];var rows=document.querySelectorAll("#framesList .frame-row");for(var i=0;i<rows.length;i++){var inputs=rows[i].querySelectorAll("input");var sel=rows[i].querySelector("select");z.push({v:parseInt(sel?sel.value:"1"),l:parseFloat(inputs[6].value),x:parseFloat(inputs[0].value),y:parseFloat(inputs[1].value),e:parseFloat(inputs[2].value),f:parseFloat(inputs[3].value),t:parseFloat(inputs[4].value),d:parseFloat(inputs[5].value)%360})}var m={ver:2,n:text,b:bold,t:0,p:{x:z[0].x,y:z[0].y},c:anchor,dep:dep,l:z.reduce(function(s,f){return s+f.l},0),w:{b:bold,f:font},ovph:true,z:z};var c=[start.toFixed(2),colorDec,"7",size,"user","9999999999","bfedit"+Math.random().toString(36).slice(2,6)].join(",");return{c:c,m:JSON.stringify(m)}}
+function getVal(id){return document.getElementById(id).value}
+var pool,stage;
+function initEngine(){var wrap=document.getElementById("stageWrap");if(pool){pool.clear()}else{pool=new window.DanmakuPool()}if(stage){stage.changeVisualization(wrap.clientWidth,wrap.clientHeight)}else{stage=new window.DanmakuStage(document.getElementById("stage"),pool,wrap.clientWidth,wrap.clientHeight,{dev:DEV,baseWidth:wrap.clientWidth,performanceMode:true})}}
+function pushAllToPool(){initEngine();pool.clear();var adv=[];for(var i=0;i<captured.length;i++){var item=captured[i];var parts=item.c.split(",");if(Number(parts[2])===7)adv.push(item)}if(adv.length){try{var parsed=AcfunParser(adv);for(var a=0;a<parsed.length;a++)pool.push(parsed[a])}catch(e){console.error(e)}}}
+function refreshRaw(){if(editIndex>=0&&editIndex<captured.length){var o=captured[editIndex];document.getElementById("rawC").value=o.c+"|"+o.m}}
+function updateLogs(){document.getElementById("logs").innerHTML=captured.map(function(o,i){var parts=o.c.split(",");var m=JSON.parse(o.m);return"<div style='margin:2px 0;cursor:pointer;padding:2px 4px;border-radius:3px;"+(i===editIndex?"background:#fd4e6d33;":"")+"' onclick='editDm("+i+")'>#"+(i+1)+" <b>"+(m.n||"(空)")+"</b> @"+parts[0]+"s</div>"}).join("");document.getElementById("dmCount").textContent=captured.length}
+function loadFrames(z,startX,startY){var framesList=document.getElementById("framesList");framesList.innerHTML="";if(z&&z.length){z.forEach(function(f){appendFrameRow(f.v,f.l,f.x,f.y,f.e,f.f,f.t,f.d)})}else{appendFrameRow(1,2,startX||50,startY||360,1,1,1,0)}}
+function appendFrameRow(v,l,x,y,e,f,t,d){var div=document.createElement("div");div.className="frame-row";div.innerHTML="<label>x<input value=\""+(x||0)+"\" step=\"1\"></label>"+"<label>y<input value=\""+(y||0)+"\" step=\"1\"></label>"+"<label>sX<input value=\""+(e||1)+"\" step=\"0.1\"></label>"+"<label>sY<input value=\""+(f||1)+"\" step=\"0.1\"></label>"+"<label>α<input value=\""+(t||1)+"\" step=\"0.1\" min=\"0\" max=\"1\"></label>"+"<label>°<input value=\""+(d||0)+"\" step=\"1\"></label>"+"<label>s<input value=\""+(l||1)+"\" step=\"0.1\"></label>"+"<label>缓动<select>"+"<option value=\"1\""+(v===1?" selected":"")+">linear</option>"+"<option value=\"2\""+(v===2?" selected":"")+">easeOut</option>"+"<option value=\"3\""+(v===3?" selected":"")+">easeIn</option>"+"<option value=\"4\""+(v===4?" selected":"")+">easeBoth</option>"+"</select></label>"+"<button class=\"delFrame\">✕</button>";div.querySelector(".delFrame").addEventListener("click",function(){div.remove()});document.getElementById("framesList").appendChild(div)}
+window.editDm=function(i){editIndex=i;var o=captured[i];var parts=o.c.split(",");var m=JSON.parse(o.m);document.getElementById("dmText").value=m.n||"";document.getElementById("dmStart").value=parseFloat(parts[0]);document.getElementById("dmSize").value=parseInt(parts[3]);var colorDec=parseInt(parts[1]);var hex=colorDec.toString(16);while(hex.length<6)hex="0"+hex;document.getElementById("dmColor").value="#"+hex;document.getElementById("dmAnchor").value=m.c!=null?m.c:4;document.getElementById("dmBold").value=m.b?"1":"0";document.getElementById("dmFont").value=(m.w&&m.w.f)?m.w.f:"微软雅黑";document.getElementById("dmDep").value=m.dep!=null?m.dep:0;loadFrames(m.z,m.p&&m.p.x,m.p&&m.p.y);refreshRaw();updateLogs()}
+function saveDm(){var obj=buildFromForm();if(editIndex>=0&&editIndex<captured.length){captured[editIndex]=obj}else{captured.push(obj);editIndex=captured.length-1}pushAllToPool();refreshRaw();updateLogs()}
+document.getElementById("saveDmBtn").addEventListener("click",saveDm);
+document.getElementById("addBtn").addEventListener("click",function(){editIndex=-1;document.getElementById("dmText").value="新弹幕";document.getElementById("dmStart").value="1";document.getElementById("dmSize").value="64";document.getElementById("dmColor").value="#ffffff";document.getElementById("dmAnchor").value="4";document.getElementById("dmBold").value="1";document.getElementById("dmDep").value="0";loadFrames(null);refreshRaw();updateLogs()});
+document.getElementById("addFrameBtn").addEventListener("click",function(){var rows=document.querySelectorAll("#framesList .frame-row");var lastInputs;if(rows.length){lastInputs=rows[rows.length-1].querySelectorAll("input")}appendFrameRow(1,1,lastInputs?parseFloat(lastInputs[0].value):50,lastInputs?parseFloat(lastInputs[1].value):360,1,1,1,0)});
+document.getElementById("copyPrevBtn").addEventListener("click",function(){var rows=document.querySelectorAll("#framesList .frame-row");if(!rows.length)return;var inputs=rows[rows.length-1].querySelectorAll("input");var sel=rows[rows.length-1].querySelector("select");appendFrameRow(sel?parseInt(sel.value):1,1,parseFloat(inputs[0].value),parseFloat(inputs[1].value),parseFloat(inputs[2].value),parseFloat(inputs[3].value),parseFloat(inputs[4].value),parseFloat(inputs[5].value))});
+document.getElementById("exportBtn").addEventListener("click",function(){if(!captured.length)return alert("请先添加弹幕");var lines=captured.map(function(o){return o.c+"|"+o.m}).join("\n");var blob=new Blob([lines],{type:"text/plain"});var a=document.createElement("a");a.download="BFDanmaku.txt";a.href=URL.createObjectURL(blob);a.click()});
+document.getElementById("importBtn").addEventListener("click",function(){document.getElementById("importFile").click()});
+document.getElementById("importFile").addEventListener("change",function(){var file=this.files[0];if(!file)return;var reader=new FileReader();reader.onload=function(){var text=reader.result;var loaded=[];try{var arrMatch=text.match(/export\s+default\s+(\[[\s\S]*\])\s*;?\s*$/);if(arrMatch){var fn=new Function("return "+arrMatch[1]);var arr=fn();if(arr&&arr.length>1&&Array.isArray(arr[1]))loaded=arr[1]}}catch(e){}if(!loaded.length){try{var parsed=JSON.parse(text);if(Array.isArray(parsed))loaded=parsed;else if(parsed&&Array.isArray(parsed[1]))loaded=parsed[1]}catch(e){}}if(!loaded.length){var lines=text.split(/\r?\n/);for(var i=0;i<lines.length;i++){var line=lines[i].trim();if(!line)continue;var pipeIdx=line.indexOf("|");if(pipeIdx!==-1){var c=line.substring(0,pipeIdx);var m=line.substring(pipeIdx+1);if(m.indexOf("=")===0)m=m.substring(1);loaded.push({c:c,m:m})}}}captured=loaded;editIndex=captured.length?0:-1;if(editIndex>=0)window.editDm(0);pushAllToPool();updateLogs()};reader.readAsText(file);this.value=""});
+document.getElementById("clearBtn").addEventListener("click",function(){captured=[];editIndex=-1;if(pool)pool.clear();updateLogs();document.getElementById("rawC").value=""});
+var totalDuration=20000;
+document.getElementById("duration").addEventListener("input",function(){totalDuration=parseFloat(this.value)*1000||20000;document.getElementById("timeline").max=totalDuration});
+document.getElementById("playBtn").addEventListener("click",function(){initEngine();pushAllToPool();stage.fix(0);stage.start();var start=Date.now();var slider=document.getElementById("timeline");var label=document.getElementById("timeLabel");function tick(){var t=Date.now()-start;var sec=t/1000;slider.value=t;label.textContent=sec.toFixed(1)+"s";if(stage)stage.fix(t);if(t<totalDuration)requestAnimationFrame(tick);else{stage.stop()}}tick()});
+document.getElementById("timeline").addEventListener("input",function(){var ms=parseInt(this.value);var sec=(ms/1000).toFixed(1);document.getElementById("timeLabel").textContent=sec+"s";if(stage)stage.fix(ms)});
+document.getElementById("timeline").max=totalDuration;
+updateLogs();
+})();
+</script>
+</html>
