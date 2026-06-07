@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         BFDanmaku - A站旧高级弹幕复活
 // @namespace    https://github.com/mg13666/BFDanmaku
-// @version      1.1.0
+// @version      1.1.1
 // @description  在A站视频页面生成"启用高级弹幕"按钮，点击后加载旧弹幕数据并用BFDanmaku渲染
 // @author       mg13666 / boomfun
 // @match        https://www.acfun.cn/v/*
@@ -17,7 +17,7 @@
   const DEV_MODE = true;
 
   // ==================== 精简Color类 ====================
-  const BFColor = (function () {
+  var BFColor = (function () {
     function Color(r, g, b, a) {
       this.r = r !== undefined ? r : 255;
       this.g = g !== undefined ? g : 255;
@@ -43,7 +43,7 @@
   })();
 
   // ==================== AcfunParser ====================
-  const AcfunParser = (function () {
+  var AcfunParser = (function () {
     var parentList = {};
     var waitForParent = {};
     var waitForMask = {};
@@ -88,15 +88,9 @@
       for (var i = 0; i < arr.length; i++) {
         var s = arr[i], filter = undefined;
         switch (s[0]) {
-          case 0:
-            filter = { type: 1, blur: s[1] };
-            break;
-          case 1:
-            filter = { type: 0, color: BFColor.fromDEC(s[1]), offsetX: 0, offsetY: 0, blur: s[3], knockout: s[8] === true, onlyShadow: false };
-            break;
-          case 2:
-            filter = { type: 0, color: BFColor.fromDEC(s[3]), offsetX: Math.cos((s[2] * Math.PI) / 180) * s[1], offsetY: Math.sin((s[2] * Math.PI) / 180) * s[1], blur: s[5], knockout: s[10] === true, onlyShadow: s[11] === true };
-            break;
+          case 0: filter = { type: 1, blur: s[1] }; break;
+          case 1: filter = { type: 0, color: BFColor.fromDEC(s[1]), offsetX: 0, offsetY: 0, blur: s[3], knockout: s[8] === true, onlyShadow: false }; break;
+          case 2: filter = { type: 0, color: BFColor.fromDEC(s[3]), offsetX: Math.cos((s[2] * Math.PI) / 180) * s[1], offsetY: Math.sin((s[2] * Math.PI) / 180) * s[1], blur: s[5], knockout: s[10] === true, onlyShadow: s[11] === true }; break;
         }
         if (filter) res.push(filter);
       }
@@ -116,15 +110,15 @@
       if (o.z) {
         var last = re[0];
         for (var i = 0; i < o.z.length; i++) {
-          var _z = o.z[i];
+          var iz = o.z[i];
           var f = {
-            opacity: _z.t !== undefined ? Number(_z.t) : last.opacity,
-            time: _z.l * 1000,
-            color: _z.c !== undefined ? BFColor.fromDEC(Number(_z.c)) : last.color,
-            rotate: { z: _z.d !== undefined ? _z.d : last.rotate.z, y: _z.e !== undefined ? -_z.e : last.rotate.y, x: _z.rx !== undefined ? -_z.rx : last.rotate.x },
-            scale: { y: _z.g !== undefined ? Number(_z.g) : last.scale.y, x: _z.f !== undefined ? Number(_z.f) : last.scale.x, z: _z.sz !== undefined ? Number(_z.sz) : last.scale.z },
-            point: { x: _z.x !== undefined ? Number(_z.x) : last.point.x, y: _z.y !== undefined ? Number(_z.y) : last.point.y, z: _z.z !== undefined ? -_z.z : last.point.z },
-            transition: _z.v !== undefined ? Number(_z.v) : 1,
+            opacity: iz.t !== undefined ? Number(iz.t) : last.opacity,
+            time: iz.l * 1000,
+            color: iz.c !== undefined ? BFColor.fromDEC(Number(iz.c)) : last.color,
+            rotate: { z: iz.d !== undefined ? iz.d : last.rotate.z, y: iz.e !== undefined ? -iz.e : last.rotate.y, x: iz.rx !== undefined ? -iz.rx : last.rotate.x },
+            scale: { y: iz.g !== undefined ? Number(iz.g) : last.scale.y, x: iz.f !== undefined ? Number(iz.f) : last.scale.x, z: iz.sz !== undefined ? Number(iz.sz) : last.scale.z },
+            point: { x: iz.x !== undefined ? Number(iz.x) : last.point.x, y: iz.y !== undefined ? Number(iz.y) : last.point.y, z: iz.z !== undefined ? -iz.z : last.point.z },
+            transition: iz.v !== undefined ? Number(iz.v) : 1,
           };
           re.push(f);
           last = f;
@@ -141,7 +135,6 @@
       for (var i = 0; i < data.length; i++) {
         var item = data[i];
         var c = item.c.split(",");
-        // 只处理 type=7 (c-m 高级弹幕)
         if (Number(c[2]) !== 7) continue;
 
         var id = "bf-o_" + Math.ceil(Math.random() * 10000000) + "_" + Math.ceil(Math.random() * 10000000);
@@ -208,7 +201,6 @@
     return m ? m[1] : null;
   }
 
-  // 新版API（大概率无type=7）
   async function fetchDanmakuListNew(resourceId, resourceType) {
     var res = await fetch("/rest/pc-direct/new-danmaku/list", {
       method: "POST",
@@ -219,106 +211,65 @@
     return res.json();
   }
 
-  // 旧版弹幕API（可能还有 type=7 数据）
-  async function fetchDanmakuListLegacy(resourceId, resourceType) {
-    // 尝试旧弹幕池API
-    var res = await fetch("/rest/pc-direct/danmaku/poll", {
-      method: "POST",
-      credentials: "include",
-      headers: { "Content-Type": "application/x-www-form-urlencoded" },
-      body: "videoId=" + resourceId + "&type=" + resourceType + "&position=0",
-    });
-    return res.json();
-  }
-
-  // 尝试直接从弹幕列表页获取
-  async function fetchDanmakuPage(resourceId) {
-    var res = await fetch(
-      "/rest/pc-direct/danmaku/list?resourceId=" + resourceId + "&resourceType=douga&pageNo=1&pageSize=10000",
-      { credentials: "include" }
-    );
-    return res.json();
-  }
-
-  // ==================== UI: 按钮 ====================
+  // ==================== UI ====================
   function createButton(onClick) {
     var btn = document.createElement("button");
     btn.id = "bfdanmaku-btn";
     btn.textContent = "启用高级弹幕";
     btn.style.cssText = [
-      "background: linear-gradient(135deg, #fd4e6d, #fda34b)",
-      "color: #fff",
-      "border: none",
-      "border-radius: 4px",
-      "padding: 6px 16px",
-      "font-size: 14px",
-      "font-weight: bold",
-      "cursor: pointer",
-      "margin-left: 12px",
-      "transition: opacity 0.2s",
+      "background:linear-gradient(135deg,#fd4e6d,#fda34b)",
+      "color:#fff",
+      "border:none",
+      "border-radius:4px",
+      "padding:8px 20px",
+      "font-size:14px",
+      "font-weight:bold",
+      "cursor:pointer",
     ].join(";");
-
-    btn.addEventListener("mouseenter", function () {
-      btn.style.opacity = "0.85";
-    });
-    btn.addEventListener("mouseleave", function () {
-      btn.style.opacity = "1";
-    });
+    btn.addEventListener("mouseenter", function () { btn.style.opacity = "0.85"; });
+    btn.addEventListener("mouseleave", function () { btn.style.opacity = "1"; });
     btn.addEventListener("click", onClick);
-
     return btn;
   }
 
   function createStatusEl() {
     var el = document.createElement("span");
     el.id = "bfdanmaku-status";
-    el.style.cssText = "font-size:12px;color:#999;margin-left:8px;";
+    el.style.cssText = "font-size:12px;color:#999;margin-left:12px;";
     return el;
   }
 
-  // 插入按钮到视频标题区域
   function insertButton(btn, statusEl) {
-    // 尝试找到视频信息栏（标题旁的区域）
-    var targets = [
-      document.querySelector(".parts-info .parts-info__btns"),
-      document.querySelector(".action-wrap"),
-      document.querySelector(".video-info .tool-bar"),
-      document.querySelector(".video-title"),
-      document.querySelector("h1"),
-    ];
+    var toolbar = document.createElement("div");
+    toolbar.id = "bfdanmaku-toolbar";
+    toolbar.style.cssText = "display:flex;align-items:center;justify-content:flex-end;margin-bottom:8px;padding:4px 0;";
+    toolbar.appendChild(btn);
+    toolbar.appendChild(statusEl);
 
-    for (var i = 0; i < targets.length; i++) {
-      var t = targets[i];
-      if (t) {
-        var wrap = document.createElement("span");
-        wrap.style.cssText = "display:inline-flex;align-items:center;";
-        wrap.appendChild(btn);
-        wrap.appendChild(statusEl);
-        t.parentElement && t.parentElement.insertBefore(wrap, t.nextSibling);
-        return true;
-      }
-    }
-
-    // fallback: 放在 .frame 上方
-    var frame = document.querySelector(".frame");
-    if (frame) {
-      var wrap = document.createElement("div");
-      wrap.style.cssText = "text-align:right;margin-bottom:4px;";
-      wrap.appendChild(btn);
-      wrap.appendChild(statusEl);
-      frame.parentElement.insertBefore(wrap, frame);
+    // 尝试插入到 .container-video 前面（A站新版播放器）
+    var cv = document.querySelector(".container-video");
+    if (cv && cv.parentElement) {
+      cv.parentElement.insertBefore(toolbar, cv);
       return true;
     }
 
-    return false;
+    // .frame（旧版）
+    var frame = document.querySelector(".frame");
+    if (frame && frame.parentElement) {
+      frame.parentElement.insertBefore(toolbar, frame);
+      return true;
+    }
+
+    // 极端 fallback: 直接放 body 最前面
+    document.body.insertBefore(toolbar, document.body.firstChild);
+    return true;
   }
 
   // ==================== 渲染核心 ====================
   function createStageOverlay(container) {
     var div = document.createElement("div");
     div.id = "bfdanmaku-stage";
-    div.style.cssText =
-      "position:absolute;top:0;left:0;width:100%;height:100%;pointer-events:none;z-index:100;";
+    div.style.cssText = "position:absolute;top:0;left:0;width:100%;height:100%;pointer-events:none;z-index:100;";
     if (getComputedStyle(container).position === "static")
       container.style.position = "relative";
     container.appendChild(div);
@@ -326,15 +277,14 @@
   }
 
   function pushDanmakusToPool(danmakuData, pool) {
-    if (!danmakuData || !danmakuData.danmakus) {
-      // 兼容旧格式: 数组直接传入
-      if (Array.isArray(danmakuData)) {
-        var items = danmakuData;
-      } else {
-        return 0;
-      }
+    var items;
+    if (!danmakuData) return 0;
+    if (Array.isArray(danmakuData)) {
+      items = danmakuData;
+    } else if (danmakuData.danmakus) {
+      items = danmakuData.danmakus;
     } else {
-      var items = danmakuData.danmakus;
+      return 0;
     }
 
     var count = 0;
@@ -351,21 +301,12 @@
     if (advancedItems.length > 0) {
       try {
         var parsed = AcfunParser(advancedItems);
-        for (var a = 0; a < parsed.length; a++) {
-          pool.push(parsed[a]);
-          count++;
-        }
-        if (DEV_MODE)
-          console.log(
-            "[BFDanmaku] 🎬 高级弹幕解析: " + parsed.length + " 条",
-            parsed
-          );
-      } catch (e) {
-        console.error("[BFDanmaku] 高级弹幕解析失败:", e);
-      }
+        for (var a = 0; a < parsed.length; a++) { pool.push(parsed[a]); count++; }
+        if (DEV_MODE) console.log("[BFDanmaku] 🎬 高级弹幕: " + parsed.length + " 条", parsed);
+      } catch (e) { console.error("[BFDanmaku] 解析失败:", e); }
     }
 
-    // 普通弹幕 -> DanmakuConfig
+    // 普通弹幕
     for (var n = 0; n < normalItems.length; n++) {
       var dm2 = normalItems[n];
       var color = BFColor.fromDEC(dm2.color || 0xffffff);
@@ -378,24 +319,13 @@
         contentType: 0,
         zindex: 0,
         filter: undefined,
-        frames: [
-          {
-            opacity: 1,
-            time: 10000,
-            color: color,
-            rotate: { x: 0, y: 0, z: 0 },
-            point: { x: 0, y: 0, z: 0 },
-            scale: { x: 1, y: 1, z: 1 },
-            transition: 0,
-          },
-        ],
+        frames: [{ opacity: 1, time: 10000, color: color, rotate: { x: 0, y: 0, z: 0 }, point: { x: 0, y: 0, z: 0 }, scale: { x: 1, y: 1, z: 1 }, transition: 0 }],
         parent: undefined,
         bm: 0,
         mask: undefined,
       });
       count++;
     }
-
     return count;
   }
 
@@ -410,58 +340,41 @@
         if (e2) { ob.disconnect(); resolve(e2); }
       });
       ob.observe(document.body, { childList: true, subtree: true });
-      setTimeout(function () {
-        ob.disconnect();
-        reject(new Error("超时: " + selector));
-      }, timeout);
+      setTimeout(function () { ob.disconnect(); reject(new Error("超时: " + selector)); }, timeout);
     });
   }
 
   // ==================== 主逻辑 ====================
   async function main() {
-    console.log("[BFDanmaku] 初始化...");
+    console.log("[BFDanmaku] v1.1.1 初始化...");
 
-    // 1. 等引擎 (Tampermonkey 的 @require 会在脚本执行前加载完成)
+    // 1. 等引擎
     if (!window.DanmakuPool || !window.DanmakuStage) {
-      console.error(
-        "[BFDanmaku] 引擎未加载！请确认 @require 指向的 dist/BFDanmaku.js 可访问"
-      );
+      console.error("[BFDanmaku] 引擎未加载！请确认Tampermonkey中@require已正确配置");
       return;
     }
     console.log("[BFDanmaku] 引擎就绪");
 
     // 2. 等播放器
     var video;
-    try {
-      video = await waitFor("video");
-    } catch (e) {
-      console.error("[BFDanmaku] 未找到 video 元素:", e);
-      return;
-    }
+    try { video = await waitFor("video"); }
+    catch (e) { console.error("[BFDanmaku] 未找到video:", e); return; }
 
     var container =
-      document.querySelector(".frame") ||
       document.querySelector(".container-video") ||
-      document.querySelector(".player-container") ||
+      document.querySelector(".frame") ||
       video.parentElement;
 
-    console.log(
-      "[BFDanmaku] 播放器就绪: " + video.videoWidth + "x" + video.videoHeight
-    );
+    console.log("[BFDanmaku] 播放器: " + video.videoWidth + "x" + video.videoHeight + " 容器:", container.className || "(none)");
 
-    // 3. 获取 resourceId
+    // 3. resourceId
     var resourceId = extractResourceId();
-    if (!resourceId) {
-      console.error("[BFDanmaku] 无法从URL获取resourceId");
-      return;
-    }
+    if (!resourceId) { console.error("[BFDanmaku] 无法获取resourceId"); return; }
     console.log("[BFDanmaku] resourceId:", resourceId);
 
-    // 4. 创建舞台（放到点击回调里）
-    var pool, stage, stageDiv;
+    // 4. 弹幕引擎状态
     var engineReady = false;
-    var statusEl = createStatusEl();
-    statusEl.textContent = "就绪";
+    var pool, stage, stageDiv;
 
     function initEngine() {
       if (engineReady) return;
@@ -476,105 +389,60 @@
       });
       engineReady = true;
 
-      // 视频事件绑定
-      video.addEventListener("play", function () {
-        stage.fix(video.currentTime * 1000);
-        stage.start();
-      });
-      video.addEventListener("pause", function () {
-        stage.stop();
-      });
-      video.addEventListener("ended", function () {
-        stage.stop();
-      });
-      video.addEventListener("seeked", function () {
-        stage.seek(video.currentTime * 1000);
-      });
+      video.addEventListener("play", function () { stage.fix(video.currentTime * 1000); stage.start(); });
+      video.addEventListener("pause", function () { stage.stop(); });
+      video.addEventListener("ended", function () { stage.stop(); });
+      video.addEventListener("seeked", function () { stage.seek(video.currentTime * 1000); });
     }
 
-    // 5. 按钮点击回调
+    // 5. 按钮
+    var statusEl = createStatusEl();
+    statusEl.textContent = "就绪";
+
     async function onEnableClick() {
       var btn = document.getElementById("bfdanmaku-btn");
-      if (btn) {
-        btn.disabled = true;
-        btn.textContent = "加载中...";
-      }
+      if (btn) { btn.disabled = true; btn.textContent = "加载中..."; }
       statusEl.textContent = "正在获取弹幕...";
 
       try {
-        // 先尝试新版API
         var listData = await fetchDanmakuListNew(resourceId, "douga");
 
         if (listData.result === 0 && listData.danmakus && listData.danmakus.length > 0) {
-          // 统计类型
           var typeStats = {};
           for (var i = 0; i < listData.danmakus.length; i++) {
             var t = listData.danmakus[i].danmakuType;
             typeStats[t] = (typeStats[t] || 0) + 1;
           }
-          console.log(
-            "[BFDanmaku] 类型分布:",
-            JSON.stringify(typeStats),
-            typeStats["7"] ? "🎉有高级弹幕!" : "⚠️无type=7"
-          );
+          console.log("[BFDanmaku] 类型分布:", JSON.stringify(typeStats), typeStats["7"] ? "🎉" : "⚠️无type=7");
 
           initEngine();
           var loaded = pushDanmakusToPool(listData, pool);
-          statusEl.textContent = "已加载 " + loaded + " 条弹幕";
-          if (btn) btn.textContent = "✓ 高级弹幕已启用";
+          statusEl.textContent = "已加载 " + loaded + " 条弹幕" + (typeStats["7"] ? " 🎉" : "");
+          if (btn) btn.textContent = "✓ 已启用";
 
-          // 如果有 video 但还没播放，自动 seek 到开头
           if (video.paused) {
             stage.fix(0);
             stage.start();
+            // 不自动播放视频
+            stage.stop();
           }
 
-          console.log(
-            "[BFDanmaku] ✅ 完成: " +
-              loaded +
-              " 条 | 类型: " +
-              JSON.stringify(typeStats)
-          );
+          console.log("[BFDanmaku] ✅ " + loaded + " 条 | " + JSON.stringify(typeStats));
         } else {
-          // 新版API无数据，尝试旧版
-          statusEl.textContent = "新版API无数据，尝试旧版...";
-          console.log("[BFDanmaku] 新版API无弹幕，尝试旧API...");
-
-          var legacyData = await fetchDanmakuPage(resourceId);
-          if (
-            legacyData.result === 0 &&
-            legacyData.danmakus &&
-            legacyData.danmakus.length > 0
-          ) {
-            initEngine();
-            var loaded2 = pushDanmakusToPool(legacyData, pool);
-            statusEl.textContent = "已加载 " + loaded2 + " 条(旧API)";
-            if (btn) btn.textContent = "✓ 已启用";
-            console.log("[BFDanmaku] ✅ 旧API加载: " + loaded2 + " 条");
-          } else {
-            statusEl.textContent = "无弹幕数据";
-            if (btn) {
-              btn.textContent = "无弹幕";
-              btn.disabled = false;
-            }
-            console.warn("[BFDanmaku] 两个API都无数据");
-          }
+          statusEl.textContent = "无弹幕数据 (result=" + listData.result + ")";
+          if (btn) { btn.textContent = "无弹幕"; btn.disabled = false; }
+          console.warn("[BFDanmaku] 无数据:", listData);
         }
       } catch (e) {
-        console.error("[BFDanmaku] 加载失败:", e);
-        statusEl.textContent = "错误: " + e.message;
-        if (btn) {
-          btn.textContent = "重试";
-          btn.disabled = false;
-        }
+        console.error("[BFDanmaku] 失败:", e);
+        statusEl.textContent = "错误: " + (e.message || e);
+        if (btn) { btn.textContent = "重试"; btn.disabled = false; }
       }
     }
 
-    // 5. 插入按钮
     var btn = createButton(onEnableClick);
-    insertButton(btn, statusEl);
-
-    console.log("[BFDanmaku] 🚀 等待点击 '启用高级弹幕'...");
+    var ok = insertButton(btn, statusEl);
+    console.log("[BFDanmaku] 🚀 按钮已插入 (" + ok + ")");
   }
 
   // ==================== 启动 ====================
