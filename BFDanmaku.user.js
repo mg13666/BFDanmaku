@@ -1,12 +1,13 @@
 // ==UserScript==
 // @name         BFDanmaku - A站旧高级弹幕复活
 // @namespace    https://github.com/mg13666/BFDanmaku
-// @version      1.4.0
+// @version      1.4.1
 // @description  拦截A站播放器弹幕API + 本地存档优先渲染旧高级弹幕。点击"启用高级弹幕"按钮激活。
 // @author       mg13666 / boomfun
 // @match        https://www.acfun.cn/v/*
 // @require      https://raw.githubusercontent.com/mg13666/BFDanmaku/master/dist/BFDanmaku.js
 // @grant        GM_xmlhttpRequest
+// @grant        GM_info
 // @run-at       document-start
 // ==/UserScript==
 
@@ -19,22 +20,22 @@
   var ARCHIVE_MAP = {
     "1758344": "https://raw.githubusercontent.com/boomfun/BFDanmaku/master/src/test/data/data1.js",
   };
-  var currentId = null;
-  (function () {
+
+  var currentId = (function () {
     var m = location.pathname.match(/ac(\d+)/);
-    if (m) currentId = m[1];
+    return m ? m[1] : null;
   })();
 
   // ==================== 拦截层 ====================
   var capturedDanmakus = [];
   var seenIds = {};
 
-  var origXHROpen = XMLHttpRequest.prototype.open;
-  var origXHRSend = XMLHttpRequest.prototype.send;
+  var origOpen = XMLHttpRequest.prototype.open;
+  var origSend = XMLHttpRequest.prototype.send;
 
   XMLHttpRequest.prototype.open = function (method, url) {
     this._bfUrl = url;
-    return origXHROpen.apply(this, arguments);
+    return origOpen.apply(this, arguments);
   };
 
   XMLHttpRequest.prototype.send = function (body) {
@@ -53,23 +54,21 @@
               }
               types[dm.danmakuType] = (types[dm.danmakuType] || 0) + 1;
             }
-            var endpoint = self._bfUrl.indexOf("list") !== -1 ? "list" : "poll";
             if (DEV_MODE && data.danmakus.length > 0) {
               console.log(
                 "[BFDanmaku] 拦截 " + data.danmakus.length +
                 " 条 (累计 " + capturedDanmakus.length +
-                ") 来自 " + endpoint +
-                " 类型: " + JSON.stringify(types)
+                ") 类型: " + JSON.stringify(types)
               );
             }
           }
         } catch (e) {}
       });
     }
-    return origXHRSend.apply(this, arguments);
+    return origSend.apply(this, arguments);
   };
 
-  // ==================== 精简Color ====================
+  // ==================== BFColor ====================
   var BFColor = (function () {
     function Color(r, g, b, a) {
       this.r = r !== undefined ? r : 255;
@@ -79,13 +78,12 @@
     }
     Color.fromHEX = function (h) {
       h = h.replace("#", "");
-      for (var i = 0; i < 6 - h.length; i++) h = "0" + h;
-      if (h.length === 7) h = "0" + h;
+      while (h.length < 8) h = "0" + h;
       return new Color(
         parseInt("0x" + h[0] + h[1]),
         parseInt("0x" + h[2] + h[3]),
         parseInt("0x" + h[4] + h[5]),
-        h[6] !== undefined ? parseInt("0x" + h[6] + h[7]) : 255
+        h.length >= 8 ? parseInt("0x" + h[6] + h[7]) : 255
       );
     };
     Color.fromDEC = function (d) {
@@ -94,27 +92,22 @@
     return Color;
   })();
 
-  // ==================== AcfunParser ====================
+  // ==================== AcfunParser（对齐原版 acfun.js） ====================
   var AcfunParser = (function () {
-    var parentList = {},
-      waitForParent = {},
-      waitForMask = {};
-    var AnchorType = {
-      leftTop: 0, middleTop: 1, rightTop: 2,
-      leftMiddle: 3, middle: 4, rightMiddle: 5,
-      leftBottom: 6, middleBottom: 7, rightBottom: 8,
-    };
+    var parentList = {}, waitForParent = {}, waitForMask = {};
 
-    function pBM(bm) {
+    function parseBlendMode(bm) {
       if ((bm >= 6 && bm <= 8) || bm >= 11) return 0;
       else if (bm > 6 && bm < 11) return bm - 3;
       else { if (bm === 1) return 2; return bm; }
     }
+
     function getContent(o) {
       return o.w && o.w.g && o.w.g.d
         ? { type: 1, content: o.w.g.d }
-        : { type: 0, content: o.n.replace(/\r/g, "\n") };
+        : { type: 0, content: o.n ? o.n.replace(/\r/g, "\n") : "" };
     }
+
     function getConfig(o) {
       return {
         anchor: o.c !== undefined ? Number(o.c) : 0,
@@ -130,24 +123,32 @@
         },
       };
     }
+
     function parseFilter(arr) {
       var res = [];
       for (var i = 0; i < arr.length; i++) {
-        var s = arr[i], f;
-        if (s[0] === 0) f = { type: 1, blur: s[1] };
-        else if (s[0] === 1)
-          f = { type: 0, color: BFColor.fromDEC(s[1]), offsetX: 0, offsetY: 0, blur: s[3], knockout: s[8] === true, onlyShadow: false };
-        else if (s[0] === 2)
+        var s = arr[i], f = undefined;
+        if (s[0] === 0) {
+          f = { type: 1, blur: s[1] };
+        } else if (s[0] === 1) {
+          f = {
+            type: 0, color: BFColor.fromDEC(s[1]),
+            offsetX: 0, offsetY: 0, blur: s[3],
+            knockout: s[8] === true, onlyShadow: false
+          };
+        } else if (s[0] === 2) {
           f = {
             type: 0, color: BFColor.fromDEC(s[3]),
             offsetX: Math.cos((s[2] * Math.PI) / 180) * s[1],
             offsetY: Math.sin((s[2] * Math.PI) / 180) * s[1],
             blur: s[5], knockout: s[10] === true, onlyShadow: s[11] === true
           };
+        }
         if (f) res.push(f);
       }
       return res.length ? res : undefined;
     }
+
     function getAdvanced(o, color) {
       var re = [{
         opacity: o.a !== undefined ? Number(o.a) : 1,
@@ -162,7 +163,7 @@
         var last = re[0];
         for (var i = 0; i < o.z.length; i++) {
           var iz = o.z[i];
-          re.push({
+          var nxt = {
             opacity: iz.t !== undefined ? Number(iz.t) : last.opacity,
             time: iz.l * 1000,
             color: iz.c !== undefined ? BFColor.fromDEC(Number(iz.c)) : last.color,
@@ -170,43 +171,91 @@
             scale: { y: iz.g !== undefined ? Number(iz.g) : last.scale.y, x: iz.f !== undefined ? Number(iz.f) : last.scale.x, z: iz.sz !== undefined ? Number(iz.sz) : last.scale.z },
             point: { x: iz.x !== undefined ? Number(iz.x) : last.point.x, y: iz.y !== undefined ? Number(iz.y) : last.point.y, z: iz.z !== undefined ? -iz.z : last.point.z },
             transition: iz.v !== undefined ? Number(iz.v) : 1,
-          });
-          last = re[re.length - 1];
+          };
+          re.push(nxt);
+          last = nxt;
         }
       }
       return re;
     }
+
     function parse(data) {
       parentList = {}; waitForParent = {}; waitForMask = {};
       var res = [];
       for (var i = 0; i < data.length; i++) {
-        var item = data[i], c = item.c.split(",");
+        var item = data[i];
+        var c = item.c.split(",");
         if (Number(c[2]) !== 7) continue;
-        var id = "bf-o_" + Math.ceil(Math.random() * 1e7) + "_" + Math.ceil(Math.random() * 1e7);
+
+        var id = "bf-o_" + Math.ceil(Math.random() * 10000000) + "_" + Math.ceil(Math.random() * 10000000);
         var color = BFColor.fromDEC(parseInt(c[1]));
         var advance = JSON.parse(item.m);
-        var content = getContent(advance), conf = getConfig(advance), adv = getAdvanced(advance, color);
+
+        var content = getContent(advance);
+        var conf = getConfig(advance);
+        var adv = getAdvanced(advance, color);
+
         var o = {
-          id: id, content: content.content, startTime: (Number(c[0]) || 0) * 1000,
-          anchor: conf.anchor !== undefined ? (AnchorType.hasOwnProperty(conf.anchor) ? AnchorType[conf.anchor] : conf.anchor) : AnchorType.leftTop,
-          word: { bold: conf.word.bold, stroke: conf.word.stroke, size: Number(c[3]) || 25, font: conf.word.font || "微软雅黑" },
-          contentType: content.type, zindex: conf.zindex, filter: conf.filter, frames: adv,
-          parent: undefined, bm: conf.bm !== undefined ? pBM(conf.bm) : 0, mask: undefined,
+          id: id,
+          content: content.content,
+          startTime: Math.floor(Number(c[0]) * 1000),
+          anchor: conf.anchor,
+          word: {
+            bold: conf.word.bold,
+            stroke: conf.word.stroke,
+            font: conf.word.font,
+            size: Number(c[3]),
+          },
+          contentType: content.type,
+          zindex: conf.zindex,
+          filter: conf.filter,
+          frames: adv,
+          bm: parseBlendMode(conf.bm),
+          user: c[4] + "",
+          ts: c[5],
         };
-        if (advance.p) {
-          o.parent = advance.p;
-          if (parentList[advance.p]) o.parent = parentList[advance.p];
-          else { waitForParent[advance.p] = waitForParent[advance.p] || []; waitForParent[advance.p].push(o); }
+
+        // parent
+        var advanceParent = advance.parent;
+        if (advanceParent) {
+          if (parentList[advanceParent]) {
+            o.parent = parentList[advanceParent];
+          } else {
+            waitForParent[advanceParent] = waitForParent[advanceParent] || [];
+            waitForParent[advanceParent].push(o);
+          }
         }
-        parentList[advance.k || advance.id] = id;
-        if (advance.mask) {
-          if (parentList[advance.mask]) o.mask = parentList[advance.mask];
-          else { waitForMask[advance.mask] = waitForMask[advance.mask] || []; waitForMask[advance.mask].push(o); }
+
+        // mask
+        var advanceMask = advance.mask;
+        if (advanceMask) {
+          if (parentList[advanceMask]) {
+            o.mask = parentList[advanceMask];
+          } else {
+            waitForMask[advanceMask] = waitForMask[advanceMask] || [];
+            waitForMask[advanceMask].push(o);
+          }
         }
+
+        // register this element by name
+        if (advance.name) {
+          parentList[advance.name] = id;
+          // resolve waitForParent
+          var wp = waitForParent[advance.name];
+          if (wp) {
+            for (var j = 0; j < wp.length; j++) wp[j].parent = id;
+            delete waitForParent[advance.name];
+          }
+          // resolve waitForMask
+          var wm = waitForMask[advance.name];
+          if (wm) {
+            for (var k = 0; k < wm.length; k++) wm[k].mask = id;
+            delete waitForMask[advance.name];
+          }
+        }
+
         res.push(o);
       }
-      for (var key in waitForParent) if (parentList[key]) for (var j = 0; j < waitForParent[key].length; j++) waitForParent[key][j].parent = parentList[key];
-      for (var k2 in waitForMask) if (parentList[k2]) for (var k = 0; k < waitForMask[k2].length; k++) waitForMask[k2][k].mask = parentList[k2];
       return res;
     }
     return parse;
@@ -235,18 +284,20 @@
 
   function loadArchiveData(url) {
     return fetchArchive(url).then(function (text) {
-      // 文件格式：export default [[], [type7 danmakus]]
-      // 提取 DATA[1] —— 用正则匹配数组结构
       var data;
-      // 尝试直接 eval 导出的数组
       try {
         var arrMatch = text.match(/export\s+default\s+(\[[\s\S]*\])\s*;?\s*$/);
         if (arrMatch) {
           var fn = new Function("return " + arrMatch[1]);
           data = fn();
         }
-      } catch (e) {}
-      if (!data || !data[1]) return [];
+      } catch (e) {
+        console.warn("[BFDanmaku] 存档解析失败", e);
+      }
+      if (!data || !data[1]) {
+        console.warn("[BFDanmaku] 存档格式异常: 缺少 DATA[1]");
+        return [];
+      }
       return data[1];
     }).catch(function (e) {
       console.warn("[BFDanmaku] 存档加载失败:", url, e);
@@ -274,7 +325,7 @@
     return el;
   }
 
-  function insertButton(btn, statusEl) {
+  function insertToolbar(btn, statusEl) {
     var toolbar = document.createElement("div");
     toolbar.id = "bfdanmaku-toolbar";
     toolbar.style.cssText =
@@ -282,14 +333,76 @@
     toolbar.appendChild(btn);
     toolbar.appendChild(statusEl);
     var cv = document.querySelector(".container-video");
-    if (cv && cv.parentElement) { cv.parentElement.insertBefore(toolbar, cv); return true; }
+    if (cv && cv.parentElement) { cv.parentElement.insertBefore(toolbar, cv); return; }
     var frame = document.querySelector(".frame");
-    if (frame && frame.parentElement) { frame.parentElement.insertBefore(toolbar, frame); return true; }
+    if (frame && frame.parentElement) { frame.parentElement.insertBefore(toolbar, frame); return; }
     document.body.insertBefore(toolbar, document.body.firstChild);
-    return true;
   }
 
-  // ==================== 渲染核心 ====================
+  // ==================== 数据推入池 ====================
+  function pushDanmakusToPool(list, pool) {
+    if (!list || !list.length) return { loaded: 0, advCount: 0 };
+
+    var adv = [], normal = [];
+    for (var i = 0; i < list.length; i++) {
+      var d = list[i];
+      var isAdv = false;
+      if (d.c) {
+        var parts = d.c.split(",");
+        if (Number(parts[2]) === 7) isAdv = true;
+      } else if (d.danmakuType === 7 || d.danmakuType === "7") {
+        isAdv = true;
+      }
+      if (isAdv) adv.push(d);
+      else normal.push(d);
+    }
+
+    var count = 0, advLoaded = 0;
+
+    if (adv.length) {
+      try {
+        var parsed = AcfunParser(adv);
+        for (var a = 0; a < parsed.length; a++) {
+          pool.push(parsed[a]);
+          count++;
+          advLoaded++;
+        }
+      } catch (e) {
+        console.error("[BFDanmaku] 高级弹幕解析失败:", e);
+      }
+    }
+
+    for (var n = 0; n < normal.length; n++) {
+      var dm = normal[n];
+      pool.push({
+        id: "dm-" + (dm.danmakuId || Math.random()),
+        content: dm.body || dm.n || "",
+        startTime: dm.position || (dm.c ? Number(dm.c.split(",")[0]) * 1000 : 0),
+        anchor: 0,
+        word: { bold: false, stroke: false, size: dm.size || 25, font: "微软雅黑" },
+        contentType: 0,
+        zindex: 0,
+        frames: [{
+          opacity: 1,
+          time: 10000,
+          color: BFColor.fromDEC(dm.color || 0xffffff),
+          rotate: { x: 0, y: 0, z: 0 },
+          point: { x: 0, y: 0, z: 0 },
+          scale: { x: 1, y: 1, z: 1 },
+          transition: 0
+        }],
+      });
+      count++;
+    }
+
+    if (adv.length > 0) {
+      console.log("[BFDanmaku] 🎬 解析高级弹幕: " + advLoaded + " 条");
+    }
+
+    return { loaded: count, advCount: advLoaded };
+  }
+
+  // ==================== 渲染 ====================
   function createStageOverlay(container) {
     var div = document.createElement("div");
     div.id = "bfdanmaku-stage";
@@ -301,171 +414,136 @@
     return div;
   }
 
-  function pushDanmakusToPool(list, pool) {
-    if (!list || !list.length) return { loaded: 0, advCount: 0 };
-    var adv = [], normal = [];
-    for (var i = 0; i < list.length; i++) {
-      var d = list[i];
-      // 来自存档的弹幕：c字段 "0,16711680,7,25,..." 有 c[2] === 7
-      // 来自拦截的弹幕：danmakuType === 7
-      var isAdv = false;
-      if (d.c) {
-        var parts = d.c.split(",");
-        if (Number(parts[2]) === 7) isAdv = true;
-      } else if (d.danmakuType === 7) {
-        isAdv = true;
-      }
-      if (isAdv) adv.push(d);
-      else normal.push(d);
-    }
-    var count = 0, advLoaded = 0;
-    if (adv.length) {
-      try {
-        var parsed = AcfunParser(adv);
-        for (var a = 0; a < parsed.length; a++) { pool.push(parsed[a]); count++; advLoaded++; }
-        console.log("[BFDanmaku] 🎬 高级弹幕 " + parsed.length + " 条 (存档)");
-      } catch (e) { console.error("[BFDanmaku] 解析失败:", e); }
-    }
-    for (var n = 0; n < normal.length; n++) {
-      var dm2 = normal[n];
-      pool.push({
-        id: "dm-" + (dm2.danmakuId || Math.random()),
-        content: dm2.body || dm2.n || "",
-        startTime: dm2.position || 0,
-        anchor: 0,
-        word: { bold: false, stroke: false, size: dm2.size || 25, font: "微软雅黑" },
-        contentType: 0, zindex: 0,
-        frames: [{ opacity: 1, time: 10000, color: BFColor.fromDEC(dm2.color || 0xffffff), rotate: { x: 0, y: 0, z: 0 }, point: { x: 0, y: 0, z: 0 }, scale: { x: 1, y: 1, z: 1 }, transition: 0 }],
-      });
-      count++;
-    }
-    return { loaded: count, advCount: advLoaded };
-  }
-
-  // ==================== 工具 ====================
-  function waitFor(sel, timeout) {
+  function waitForVideo(timeout) {
     timeout = timeout || 30000;
-    return new Promise(function (resolve, reject) {
-      var el = document.querySelector(sel);
-      if (el) return resolve(el);
-      var ob = new MutationObserver(function () {
-        var e2 = document.querySelector(sel);
-        if (e2) { ob.disconnect(); resolve(e2); }
-      });
-      ob.observe(document.body, { childList: true, subtree: true });
+    return new Promise(function (resolve) {
+      var el = document.querySelector("video");
+      if (el && el.videoWidth > 0) return resolve(el);
+      var intvl = setInterval(function () {
+        var v = document.querySelector("video");
+        if (v && v.videoWidth > 0) {
+          clearInterval(intvl);
+          resolve(v);
+        }
+      }, 500);
       setTimeout(function () {
-        ob.disconnect();
-        reject(new Error("超时: " + sel));
+        clearInterval(intvl);
+        var v = document.querySelector("video");
+        if (v) resolve(v);
       }, timeout);
     });
   }
 
   // ==================== 主逻辑 ====================
-  async function main() {
-    console.log("[BFDanmaku] v1.4.0 存档优先模式 | video=" + currentId);
+  function main() {
+    console.log("[BFDanmaku] v1.4.1 存档优先模式 | video=" + currentId);
 
     if (!window.DanmakuPool || !window.DanmakuStage) {
-      console.error("[BFDanmaku] 引擎未加载");
+      setTimeout(main, 1000);
       return;
     }
 
-    var video;
-    try { video = await waitFor("video"); }
-    catch (e) { console.error("[BFDanmaku] 未找到video"); return; }
-
-    var container =
-      document.querySelector(".container-video") ||
-      document.querySelector(".frame") ||
-      video.parentElement;
-
-    // 预加载存档（若有）
     var archiveUrl = ARCHIVE_MAP[currentId];
-    var archiveData = null;
     var hasArchive = !!archiveUrl;
+    var archiveData = [];
+    var archiveLoaded = false;
+
+    // 异步预加载存档
+    var archivePromise = Promise.resolve([]);
     if (archiveUrl) {
-      console.log("[BFDanmaku] 📦 检测到存档: " + archiveUrl);
-      archiveData = await loadArchiveData(archiveUrl);
-      console.log("[BFDanmaku] 📦 存档加载: " + archiveData.length + " 条 type=7");
+      archivePromise = loadArchiveData(archiveUrl).then(function (d) {
+        archiveData = d;
+        archiveLoaded = true;
+        console.log("[BFDanmaku] 📦 存档就绪: " + archiveData.length + " 条 type=7");
+        return d;
+      });
     }
 
-    console.log("[BFDanmaku] video=" + video.videoWidth + "x" + video.videoHeight +
-      " 已拦截=" + capturedDanmakus.length + "条" +
-      (hasArchive ? " 存档=" + archiveData.length + "条" : ""));
-
     var engineReady = false, pool, stage, stageDiv;
-    function initEngine() {
+
+    function initEngine(video) {
       if (engineReady) return;
+      var container =
+        document.querySelector(".container-video") ||
+        document.querySelector(".frame") ||
+        video.parentElement;
+
       stageDiv = createStageOverlay(container);
       pool = new window.DanmakuPool();
-      stage = new window.DanmakuStage(stageDiv, pool, video.videoWidth || 1280, video.videoHeight || 720, {
-        dev: DEV_MODE, baseWidth: 1280, performanceMode: true,
+      stage = new window.DanmakuStage(stageDiv, pool, video.videoWidth, video.videoHeight, {
+        dev: DEV_MODE,
+        baseWidth: 1280,
+        performanceMode: true,
       });
-      engineReady = true;
+
       video.addEventListener("play", function () { stage.fix(video.currentTime * 1000); stage.start(); });
       video.addEventListener("pause", function () { stage.stop(); });
       video.addEventListener("ended", function () { stage.stop(); });
       video.addEventListener("seeked", function () { stage.seek(video.currentTime * 1000); });
+
+      engineReady = true;
       console.log("[BFDanmaku] 引擎初始化完成");
     }
 
     var statusEl = createStatusEl();
 
-    async function onEnableClick() {
+    function onEnableClick() {
       var btn = document.getElementById("bfdanmaku-btn");
-      initEngine();
 
-      // 如果没有拦截到弹幕也没有存档，触发播放
-      if (capturedDanmakus.length === 0 && !archiveData) {
-        statusEl.textContent = "短暂播放触发服务器弹幕...";
-        if (btn) btn.textContent = "触发中...";
-        try {
-          await video.play();
-          await new Promise(function (r) { setTimeout(r, 2000); });
-          video.pause();
-        } catch (e) {}
-      }
+      waitForVideo(15000).then(function (video) {
+        initEngine(video);
 
-      // 优先喂存档
-      var totalLoaded = 0, advTotal = 0;
-      if (archiveData && archiveData.length) {
-        var r = pushDanmakusToPool(archiveData, pool);
-        totalLoaded += r.loaded;
-        advTotal += r.advCount;
-      }
+        if (archiveLoaded) {
+          var r = pushDanmakusToPool(archiveData, pool);
+          var advCount = r.advCount;
+          var totalLoaded = r.loaded;
 
-      // 再喂拦截到的普通弹幕
-      if (capturedDanmakus.length) {
-        var r2 = pushDanmakusToPool(capturedDanmakus, pool);
-        totalLoaded += r2.loaded;
-        if (!hasArchive) advTotal += r2.advCount;
-      }
+          // 也喂拦截到的普通弹幕
+          if (capturedDanmakus.length) {
+            var r2 = pushDanmakusToPool(capturedDanmakus, pool);
+            totalLoaded += r2.loaded;
+          }
 
-      if (totalLoaded === 0) {
-        statusEl.textContent = "无弹幕数据";
-        if (btn) { btn.textContent = "无弹幕"; btn.disabled = false; }
-        return;
-      }
-
-      var msg = "已加载 " + totalLoaded + " 条";
-      if (advTotal > 0) msg += " 🎉含" + advTotal + "条高级弹幕!";
-      else if (hasArchive) msg += " (存档模式)";
-      else msg += " (无type=7)";
-      statusEl.textContent = msg;
-      if (btn) btn.textContent = "✓ 已启用";
-
-      console.log("[BFDanmaku] ✅ " + totalLoaded + " 条 | 高级=" + advTotal + " | 拦截=" + capturedDanmakus.length);
+          var msg = "🎬 " + advCount + "条高级弹幕 + " + (totalLoaded - advCount) + "条普通";
+          statusEl.textContent = msg;
+          if (btn) { btn.textContent = "✓ 已启用"; btn.disabled = false; }
+          console.log("[BFDanmaku] ✅ 总计: " + totalLoaded + " 条 (高级=" + advCount + ")");
+        } else {
+          // 无存档：只用拦截数据
+          if (capturedDanmakus.length === 0) {
+            statusEl.textContent = "等待弹幕数据...";
+            // 短暂播放触发
+            try { video.play(); setTimeout(function () { video.pause(); }, 2000); } catch (e) {}
+          }
+          setTimeout(function () {
+            if (capturedDanmakus.length) {
+              var r = pushDanmakusToPool(capturedDanmakus, pool);
+              statusEl.textContent = "已加载 " + r.loaded + " 条 (无type=7)";
+            } else {
+              statusEl.textContent = "无弹幕数据，请尝试播放";
+            }
+            if (btn) { btn.textContent = "✓ 已启用"; btn.disabled = false; }
+          }, 3000);
+        }
+      }).catch(function () {
+        statusEl.textContent = "未找到播放器";
+      });
     }
 
     // 初始状态
-    var st = "就绪";
-    if (hasArchive) st = "📦 存档就绪(" + archiveData.length + "条type=7)";
-    else if (capturedDanmakus.length > 0) st = "已捕获 " + capturedDanmakus.length + " 条";
-    else st = "就绪（拦截中...）";
-    statusEl.textContent = st;
+    var initStatus = hasArchive ? "📦 存档加载中..." : "就绪（拦截中...）";
+    statusEl.textContent = initStatus;
 
     var btn = createButton(onEnableClick);
-    insertButton(btn, statusEl);
+    insertToolbar(btn, statusEl);
     console.log("[BFDanmaku] 🚀 按钮已插入");
+
+    // 存档加载完成后更新状态
+    archivePromise.then(function (d) {
+      if (d.length > 0) {
+        statusEl.textContent = "📦 存档就绪(" + d.length + "条type=7)";
+      }
+    });
   }
 
   if (document.readyState === "loading") {
