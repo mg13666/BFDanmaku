@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         BFDanmaku - A站旧高级弹幕复活
 // @namespace    https://github.com/mg13666/BFDanmaku
-// @version      1.4.2
+// @version      1.4.3
 // @description  拦截A站播放器弹幕API + 本地存档优先渲染旧高级弹幕。点击"启用高级弹幕"按钮激活。
 // @author       mg13666 / boomfun
 // @match        https://www.acfun.cn/v/*
@@ -17,8 +17,11 @@
   var DEV_MODE = true;
 
   // ==================== 存档映射：videoId → GitHub raw data URL ====================
+  // 格式: "<ac号>": "<GitHub raw URL 或其他直链>"
+  // 注意: data1.js 经确认为 JOJO 测试数据，非 ac1758344 弹幕。
+  // 真实存档待获取后添加。
   var ARCHIVE_MAP = {
-    "1758344": "https://raw.githubusercontent.com/boomfun/BFDanmaku/master/src/test/data/data1.js",
+    // 示例（数据不对）: "1758344": "https://raw.githubusercontent.com/boomfun/BFDanmaku/master/src/test/data/data1.js",
   };
 
   var currentId = (function () {
@@ -381,7 +384,7 @@
 
   // ==================== 主逻辑 ====================
   function main() {
-    console.log("[BFDanmaku] v1.4.2 | video=" + currentId);
+    console.log("[BFDanmaku] v1.4.3 | video=" + currentId + (Object.keys(ARCHIVE_MAP).length ? " | 存档视频=" + Object.keys(ARCHIVE_MAP).length + "个" : " | 纯拦截模式"));
 
     if (!window.DanmakuPool || !window.DanmakuStage) {
       setTimeout(main, 1000);
@@ -391,13 +394,11 @@
     var archiveUrl = ARCHIVE_MAP[currentId];
     var hasArchive = !!archiveUrl;
     var archiveData = [];
-    var archiveLoaded = false;
 
     var archivePromise = Promise.resolve([]);
     if (archiveUrl) {
       archivePromise = loadArchiveData(archiveUrl).then(function (d) {
         archiveData = d;
-        archiveLoaded = true;
         if (d.length) console.log("[BFDanmaku] 📦 存档就绪: " + d.length + " 条 type=7");
         return d;
       });
